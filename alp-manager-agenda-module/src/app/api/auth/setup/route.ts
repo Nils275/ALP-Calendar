@@ -111,9 +111,9 @@ export async function POST(request: Request) {
       return updated?.id ?? null;
     });
 
-    if (!initializedUserId) {
-      return jsonError("Initialisation impossible.", 403);
-    }
+   if (!initializedUserId) {
+  return jsonError("Compte Direction introuvable, inactif ou déjà initialisé.", 403);
+}
 
     const sessionCreated = await createSession(initializedUserId);
 
