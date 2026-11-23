@@ -1,9 +1,193 @@
 {
-  "id": "ca4216cf-bf50-4f94-8301-8e9353e61057",
+  "id": "99224b2f-daf2-457c-bb70-7d342d12512a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
+    "public.calendar_event_exceptions": {
+      "name": "calendar_event_exceptions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "event_id": {
+          "name": "event_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "original_start_at": {
+          "name": "original_start_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "is_deleted": {
+          "name": "is_deleted",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "status": {
+          "name": "status",
+          "type": "calendar_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "start_at": {
+          "name": "start_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "end_at": {
+          "name": "end_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "calendar_event_exceptions_uidx": {
+          "name": "calendar_event_exceptions_uidx",
+          "columns": [
+            {
+              "expression": "event_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "original_start_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "calendar_event_exceptions_event_id_calendar_events_id_fk": {
+          "name": "calendar_event_exceptions_event_id_calendar_events_id_fk",
+          "tableFrom": "calendar_event_exceptions",
+          "tableTo": "calendar_events",
+          "columnsFrom": [
+            "event_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.calendar_event_participants": {
+      "name": "calendar_event_participants",
+      "schema": "",
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "calendar_event_participants_user_idx": {
+          "name": "calendar_event_participants_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "calendar_event_participants_event_id_calendar_events_id_fk": {
+          "name": "calendar_event_participants_event_id_calendar_events_id_fk",
+          "tableFrom": "calendar_event_participants",
+          "tableTo": "calendar_events",
+          "columnsFrom": [
+            "event_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "calendar_event_participants_user_id_users_id_fk": {
+          "name": "calendar_event_participants_user_id_users_id_fk",
+          "tableFrom": "calendar_event_participants",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "calendar_event_participants_event_id_user_id_pk": {
+          "name": "calendar_event_participants_event_id_user_id_pk",
+          "columns": [
+            "event_id",
+            "user_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.calendar_events": {
       "name": "calendar_events",
       "schema": "",
@@ -29,10 +213,11 @@
         },
         "category": {
           "name": "category",
-          "type": "text",
+          "type": "calendar_category",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'commercial'"
+          "default": "'administratif'"
         },
         "start_at": {
           "name": "start_at",
@@ -61,43 +246,51 @@
         },
         "assigned_to": {
           "name": "assigned_to",
-          "type": "integer",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         },
         "created_by": {
           "name": "created_by",
-          "type": "integer",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         },
         "priority": {
           "name": "priority",
-          "type": "text",
+          "type": "calendar_priority",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'normale'"
+          "default": "'normal'"
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "calendar_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'a_venir'"
+          "default": "'upcoming'"
         },
         "visibility": {
           "name": "visibility",
-          "type": "text",
+          "type": "calendar_visibility",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'partage'"
+          "default": "'shared'"
         },
-        "reminder": {
-          "name": "reminder",
+        "reminder_minutes": {
+          "name": "reminder_minutes",
           "type": "integer",
           "primaryKey": false,
-          "notNull": true,
-          "default": 0
+          "notNull": false
         },
         "recurrence_rule": {
           "name": "recurrence_rule",
@@ -105,16 +298,10 @@
           "primaryKey": false,
           "notNull": false
         },
-        "recurrence_exceptions": {
-          "name": "recurrence_exceptions",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
         "source": {
           "name": "source",
-          "type": "text",
+          "type": "calendar_source",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
           "default": "'local'"
@@ -127,7 +314,8 @@
         },
         "external_object_type": {
           "name": "external_object_type",
-          "type": "text",
+          "type": "calendar_external_object_type",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": false
         },
@@ -151,21 +339,16 @@
         },
         "sync_status": {
           "name": "sync_status",
-          "type": "text",
+          "type": "calendar_sync_status",
+          "typeSchema": "public",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "default": "'local'"
         },
         "sync_direction": {
           "name": "sync_direction",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'outbound'"
-        },
-        "external_unique_key": {
-          "name": "external_unique_key",
-          "type": "text",
+          "type": "calendar_sync_direction",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": false
         },
@@ -185,8 +368,8 @@
         }
       },
       "indexes": {
-        "calendar_events_start_at_idx": {
-          "name": "calendar_events_start_at_idx",
+        "calendar_events_start_idx": {
+          "name": "calendar_events_start_idx",
           "columns": [
             {
               "expression": "start_at",
@@ -200,8 +383,8 @@
           "method": "btree",
           "with": {}
         },
-        "calendar_events_end_at_idx": {
-          "name": "calendar_events_end_at_idx",
+        "calendar_events_end_idx": {
+          "name": "calendar_events_end_idx",
           "columns": [
             {
               "expression": "end_at",
@@ -215,23 +398,8 @@
           "method": "btree",
           "with": {}
         },
-        "calendar_events_category_idx": {
-          "name": "calendar_events_category_idx",
-          "columns": [
-            {
-              "expression": "category",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "calendar_events_assigned_to_idx": {
-          "name": "calendar_events_assigned_to_idx",
+        "calendar_events_assigned_idx": {
+          "name": "calendar_events_assigned_idx",
           "columns": [
             {
               "expression": "assigned_to",
@@ -245,8 +413,23 @@
           "method": "btree",
           "with": {}
         },
-        "calendar_events_source_external_unique": {
-          "name": "calendar_events_source_external_unique",
+        "calendar_events_created_by_idx": {
+          "name": "calendar_events_created_by_idx",
+          "columns": [
+            {
+              "expression": "created_by",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "calendar_events_source_external_uidx": {
+          "name": "calendar_events_source_external_uidx",
           "columns": [
             {
               "expression": "source",
@@ -262,21 +445,7 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "calendar_events_external_unique_key": {
-          "name": "calendar_events_external_unique_key",
-          "columns": [
-            {
-              "expression": "external_unique_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
+          "where": "\"calendar_events\".\"external_id\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -306,232 +475,20 @@
           "columnsTo": [
             "id"
           ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "calendar_events_updated_by_users_id_fk": {
+          "name": "calendar_events_updated_by_users_id_fk",
+          "tableFrom": "calendar_events",
+          "tableTo": "users",
+          "columnsFrom": [
+            "updated_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.event_participants": {
-      "name": "event_participants",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "event_id": {
-          "name": "event_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "event_participants_unique": {
-          "name": "event_participants_unique",
-          "columns": [
-            {
-              "expression": "event_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "event_participants_event_idx": {
-          "name": "event_participants_event_idx",
-          "columns": [
-            {
-              "expression": "event_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "event_participants_event_id_calendar_events_id_fk": {
-          "name": "event_participants_event_id_calendar_events_id_fk",
-          "tableFrom": "event_participants",
-          "tableTo": "calendar_events",
-          "columnsFrom": [
-            "event_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "event_participants_user_id_users_id_fk": {
-          "name": "event_participants_user_id_users_id_fk",
-          "tableFrom": "event_participants",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.event_reminders": {
-      "name": "event_reminders",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "event_id": {
-          "name": "event_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "minutes_before": {
-          "name": "minutes_before",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "channel": {
-          "name": "channel",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'in_app'"
-        },
-        "scheduled_for": {
-          "name": "scheduled_for",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "event_reminders_event_idx": {
-          "name": "event_reminders_event_idx",
-          "columns": [
-            {
-              "expression": "event_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "event_reminders_scheduled_idx": {
-          "name": "event_reminders_scheduled_idx",
-          "columns": [
-            {
-              "expression": "scheduled_for",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "event_reminders_event_id_calendar_events_id_fk": {
-          "name": "event_reminders_event_id_calendar_events_id_fk",
-          "tableFrom": "event_reminders",
-          "tableTo": "calendar_events",
-          "columnsFrom": [
-            "event_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "event_reminders_user_id_users_id_fk": {
-          "name": "event_reminders_user_id_users_id_fk",
-          "tableFrom": "event_reminders",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -547,12 +504,13 @@
       "columns": {
         "id": {
           "name": "id",
-          "type": "serial",
+          "type": "uuid",
           "primaryKey": true,
-          "notNull": true
+          "notNull": true,
+          "default": "gen_random_uuid()"
         },
-        "name": {
-          "name": "name",
+        "full_name": {
+          "name": "full_name",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -563,32 +521,26 @@
           "primaryKey": false,
           "notNull": true
         },
-        "role": {
-          "name": "role",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'collaborateur'"
-        },
         "job_title": {
           "name": "job_title",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "initials": {
-          "name": "initials",
-          "type": "text",
+        "role": {
+          "name": "role",
+          "type": "user_role",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'AL'"
+          "default": "'collaborateur'"
         },
         "color": {
           "name": "color",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'#3ee07d'"
+          "default": "'#3ddc84'"
         },
         "is_active": {
           "name": "is_active",
@@ -603,20 +555,27 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {
-        "users_email_unique": {
-          "name": "users_email_unique",
+        "users_active_idx": {
+          "name": "users_active_idx",
           "columns": [
             {
-              "expression": "email",
+              "expression": "is_active",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
-          "isUnique": true,
+          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -624,13 +583,113 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "users_email_unique": {
+          "name": "users_email_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "email"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
     }
   },
-  "enums": {},
+  "enums": {
+    "public.calendar_category": {
+      "name": "calendar_category",
+      "schema": "public",
+      "values": [
+        "commercial",
+        "rendez_vous",
+        "atelier",
+        "livraison",
+        "reception",
+        "revision",
+        "projet",
+        "reunion_interne",
+        "administratif"
+      ]
+    },
+    "public.calendar_external_object_type": {
+      "name": "calendar_external_object_type",
+      "schema": "public",
+      "values": [
+        "task",
+        "deal",
+        "contact",
+        "project",
+        "custom"
+      ]
+    },
+    "public.calendar_priority": {
+      "name": "calendar_priority",
+      "schema": "public",
+      "values": [
+        "low",
+        "normal",
+        "high",
+        "urgent"
+      ]
+    },
+    "public.calendar_source": {
+      "name": "calendar_source",
+      "schema": "public",
+      "values": [
+        "local",
+        "hubspot",
+        "outlook"
+      ]
+    },
+    "public.calendar_status": {
+      "name": "calendar_status",
+      "schema": "public",
+      "values": [
+        "upcoming",
+        "in_progress",
+        "done",
+        "cancelled"
+      ]
+    },
+    "public.calendar_sync_direction": {
+      "name": "calendar_sync_direction",
+      "schema": "public",
+      "values": [
+        "inbound",
+        "outbound",
+        "both"
+      ]
+    },
+    "public.calendar_sync_status": {
+      "name": "calendar_sync_status",
+      "schema": "public",
+      "values": [
+        "local",
+        "synced",
+        "pending",
+        "error"
+      ]
+    },
+    "public.calendar_visibility": {
+      "name": "calendar_visibility",
+      "schema": "public",
+      "values": [
+        "shared",
+        "private"
+      ]
+    },
+    "public.user_role": {
+      "name": "user_role",
+      "schema": "public",
+      "values": [
+        "direction",
+        "responsable",
+        "collaborateur"
+      ]
+    }
+  },
   "schemas": {},
   "sequences": {},
   "roles": {},

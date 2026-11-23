@@ -15,6 +15,8 @@ export const pool =
   globalForDb.__arenaNextJsPostgresqlPool ??
   new Pool({
     connectionString: databaseUrl,
+    // Peu de connexions : en hébergement « serverless », chaque instance ouvre son propre pool.
+    max: Number(process.env.DB_POOL_MAX ?? 5),
   });
 
 if (process.env.NODE_ENV !== "production") {
