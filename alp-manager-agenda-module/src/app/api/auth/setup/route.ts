@@ -50,11 +50,11 @@ export async function POST(request: Request) {
     const email = parsed.data.email.toLowerCase();
 
     if (!validSetupToken(setupToken)) {
-      return jsonError("Initialisation impossible.", 403);
+      return jsonError("Jeton ou adresse non autorisé(e).", 403);
     }
 
     if (!allowedDirectionEmails().has(email)) {
-      return jsonError("Initialisation impossible.", 403);
+      return jsonError("Jeton ou adresse non autorisé(e).", 403);
     }
 
     const passwordHash = await hashPassword(password);
@@ -126,3 +126,4 @@ export async function POST(request: Request) {
     return handleRouteError(error);
   }
 }
+
