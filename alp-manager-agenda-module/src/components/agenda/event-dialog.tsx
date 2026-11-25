@@ -4,8 +4,6 @@ import { Globe2, Loader, Lock, MapPin, Repeat } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Modal } from "@/components/ui/modal";
 import {
-  CATEGORIES,
-  CATEGORY_KEYS,
   PRIORITIES,
   PRIORITY_KEYS,
   STATUSES,
@@ -18,6 +16,7 @@ import { buildRule, describeRecurrence, parseRule, type RecurrenceFreq } from "@
 import { dateKey, lastDayKeyOf, pad2, timeOf, toWallClock, todayKey, weekdayIndex } from "@/lib/calendar/time";
 import type { CalendarUser, EventDetailDto, EventPriority, EventStatus, EventVisibility } from "@/lib/calendar/types";
 import { Avatar, CategoryIcon, tint } from "./bits";
+import type { AgendaCategory } from "./agenda-filters";
 
 export type EditorTarget =
   | { mode: "create"; dayKey?: string; minutes?: number }
@@ -27,6 +26,8 @@ type Form = {
   title: string;
   description: string;
   category: CategoryKey;
+  subcategoryId: string;
+  taskTypeId: string;
   allDay: boolean;
   startDate: string;
   startTime: string;
@@ -43,6 +44,48 @@ type Form = {
   interval: number;
   weekdays: number[];
   until: string;
+  customFields: Record<string, unknown>;
+};
+type WorkflowSubcategory = {
+  id: string;
+  categoryKey: string;
+  label: string;
+  isActive: boolean;
+};
+
+type WorkflowTaskType = {
+  id: string;
+  subcategoryId: string;
+  label: string;
+  isActive: boolean;
+};
+
+type WorkflowField = {
+  id: string;
+  taskTypeId: string;
+  key: string;
+  label: string;
+  fieldType: string;
+  isRequired: boolean;
+  options: Array<{ label: string; value: string }>;
+  isActive: boolean;
+};
+
+type CategoryField = {
+  id: string;
+  categoryKey: string;
+  label: string;
+  fieldType: string;
+  isRequired: boolean;
+  options: Array<{ label: string; value: string }>;
+  sortOrder: number;
+  isActive: boolean;
+};
+
+type WorkflowData = {
+  subcategories: WorkflowSubcategory[];
+  taskTypes: WorkflowTaskType[];
+  fields: WorkflowField[];
 };
 
 const REMINDER_OPTIONS: Array<[string, string]> = [
@@ -68,7 +111,7 @@ function hm(totalMinutes: number): string {
   return `${pad2(h)}:${pad2(m)}`;
 }
 
-function defaultForm(currentUser: CalendarUser, dayKey?: string, minutes?: number): Form {
+function defaultForm(currentUser: CalendarUser, dayKey?: string, minutes?: number, defaultCategory = "commercial"): Form {
   const day = dayKey ?? todayKey();
   let startMin: number;
   if (minutes !== undefined) {
@@ -79,9 +122,11 @@ function defaultForm(currentUser: CalendarUser, dayKey?: string, minutes?: numbe
   }
   const endMin = Math.min(startMin + 60, 23 * 60 + 45);
   return {
+    subcategoryId: "",
+    taskTypeId: "",
     title: "",
     description: "",
-    category: "commercial",
+    category: defaultCategory,
     allDay: false,
     startDate: day,
     startTime: hm(startMin),
@@ -98,6 +143,7 @@ function defaultForm(currentUser: CalendarUser, dayKey?: string, minutes?: numbe
     interval: 1,
     weekdays: [weekdayIndex(day)],
     until: "",
+    customFields: {},
   };
 }
 
@@ -111,6 +157,8 @@ function formFromDetail(detail: EventDetailDto): Form {
     title: e.title,
     description: e.description ?? "",
     category: e.category,
+    subcategoryId: e.subcategoryId ?? "",
+    taskTypeId: e.taskTypeId ?? "",
     allDay: e.allDay,
     startDate,
     startTime: e.allDay ? "09:00" : timeOf(start),
@@ -127,6 +175,7 @@ function formFromDetail(detail: EventDetailDto): Form {
     interval: rule?.interval ?? 1,
     weekdays: rule && rule.weekdays.length > 0 ? rule.weekdays : [weekdayIndex(startDate)],
     until: rule?.until ?? "",
+    customFields: e.customFields ?? {},
   };
 }
 
@@ -146,23 +195,82 @@ type Props = {
   target: EditorTarget | null;
   users: CalendarUser[];
   currentUser: CalendarUser;
+  categories: AgendaCategory[];
   onSaved: (eventId: string, message: string) => void;
 };
 
-export function EventDialog({ open, onClose, target, users, currentUser, onSaved }: Props) {
+export function EventDialog({ open, onClose, target, users, currentUser, categories, onSaved }: Props) {
   const [form, setForm] = useState<Form | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSeries, setIsSeries] = useState(false);
+  const [workflowSubcategories, setWorkflowSubcategories] = useState<WorkflowSubcategory[]>([]);
+  const [workflowTaskTypes, setWorkflowTaskTypes] = useState<WorkflowTaskType[]>([]);
+  const [workflowFields, setWorkflowFields] = useState<WorkflowField[]>([]);
+  const [categoryFields, setCategoryFields] = useState<CategoryField[]>([]);
+  const [categoryFieldsLoading, setCategoryFieldsLoading] = useState(false);
+  const currentCategoryKey = form?.category ?? null;
 
+  // Champs personnalisés de la catégorie sélectionnée (rechargés à chaque changement de catégorie).
+  useEffect(() => {
+    if (!open || !currentCategoryKey) {
+      setCategoryFields([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    setCategoryFieldsLoading(true);
+
+    apiRequest<{ fields: CategoryField[] }>(
+      `/api/calendar/category-fields?categoryKey=${encodeURIComponent(currentCategoryKey)}`,
+      { signal: controller.signal },
+    )
+      .then((data) => {
+        setCategoryFields(data.fields ?? []);
+        setCategoryFieldsLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        console.error("Chargement des champs de catégorie impossible :", err);
+        setCategoryFields([]);
+        setCategoryFieldsLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [open, currentCategoryKey]);
+
+  const activeCategoryFields = categoryFields
+    .filter((field) => field.isActive && field.categoryKey === currentCategoryKey)
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label));
+
+  useEffect(() => {
+    if (!open) return;
+
+    const controller = new AbortController();
+
+    apiRequest<WorkflowData>("/api/workflows", { signal: controller.signal })
+      .then((data) => {
+        setWorkflowSubcategories(data.subcategories);
+        setWorkflowTaskTypes(data.taskTypes);
+        setWorkflowFields(data.fields ?? []);
+
+      })
+      .catch((err: unknown) => {
+        if (!controller.signal.aborted) {
+          console.error("Chargement des workflows impossible :", err);
+        }
+      });
+
+    return () => controller.abort();
+  }, [open]);
   useEffect(() => {
     if (!open || !target) return;
     setError(null);
     setSaving(false);
 
     if (target.mode === "create") {
-      setForm(defaultForm(currentUser, target.dayKey, target.minutes));
+      setForm(defaultForm(currentUser, target.dayKey, target.minutes, categories[0]?.key ?? "commercial"));
       setIsSeries(false);
       setLoading(false);
       return;
@@ -185,8 +293,27 @@ export function EventDialog({ open, onClose, target, users, currentUser, onSaved
     return () => controller.abort();
   }, [open, target, currentUser]);
 
+  // Les valeurs de customFields ne sont JAMAIS effacées lors d'un changement de
+  // catégorie, de sous-catégorie ou de type de tâche : les valeurs historiques sont conservées.
   const set = <K extends keyof Form>(key: K, value: Form[K]) =>
-    setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+    setForm((prev) => {
+      if (!prev) return prev;
+
+      if (key === "subcategoryId") {
+        return { ...prev, subcategoryId: value as string, taskTypeId: "" };
+      }
+
+      if (key === "category") {
+        return {
+          ...prev,
+          category: value as CategoryKey,
+          subcategoryId: "",
+          taskTypeId: "",
+        };
+      }
+
+      return { ...prev, [key]: value };
+    });
 
   function toggleParticipant(id: string) {
     setForm((prev) => {
@@ -221,6 +348,13 @@ export function EventDialog({ open, onClose, target, users, currentUser, onSaved
     if (f.repeat !== "none" && f.until && f.until < f.startDate) {
       return "La fin de récurrence doit être postérieure au début.";
     }
+    for (const field of activeCategoryFields) {
+      if (!field.isRequired || field.fieldType === "checkbox") continue;
+      const value = f.customFields[field.id];
+      if (value === undefined || value === null || (typeof value === "string" && !value.trim())) {
+        return `Le champ « ${field.label} » est obligatoire.`;
+      }
+    }
     return null;
   }
 
@@ -233,10 +367,26 @@ export function EventDialog({ open, onClose, target, users, currentUser, onSaved
       return;
     }
 
+    // Normalisation des champs de catégorie (clé = UUID du champ) ; les autres clés sont conservées telles quelles.
+    const customFields: Record<string, unknown> = { ...form.customFields };
+    for (const field of activeCategoryFields) {
+      const value = customFields[field.id];
+      if (field.fieldType === "checkbox") {
+        customFields[field.id] = value === true;
+      } else if (value === undefined || value === null || (typeof value === "string" && !value.trim())) {
+        delete customFields[field.id];
+      } else if (field.fieldType === "number" && typeof value === "string") {
+        customFields[field.id] = Number(value);
+      }
+    }
+
     const body = {
       title: form.title.trim(),
       description: form.description.trim() || null,
       category: form.category,
+      subcategoryId: form.subcategoryId || null,
+      taskTypeId: form.taskTypeId || null,
+      customFields,
       allDay: form.allDay,
       startDate: form.startDate,
       startTime: form.allDay ? null : form.startTime,
@@ -350,30 +500,272 @@ export function EventDialog({ open, onClose, target, users, currentUser, onSaved
           <div>
             <span className={INPUT_LABEL}>Catégorie</span>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-              {CATEGORY_KEYS.map((key) => {
-                const selected = form.category === key;
-                const meta = CATEGORIES[key];
+              {categories.map((category) => {
+                const selected = form.category === category.key;
                 return (
                   <button
-                    key={key}
+                    key={category.key}
                     type="button"
-                    onClick={() => set("category", key)}
+  onClick={() => {
+  set("category", category.key);
+  set("subcategoryId", "");
+  set("taskTypeId", "");
+}}
                     aria-pressed={selected}
                     className="flex items-center gap-2 rounded-xl border px-2.5 py-2 text-left text-[13px] transition-all duration-200"
                     style={{
-                      borderColor: selected ? meta.color : "rgba(255,255,255,0.08)",
-                      background: selected ? tint(meta.color, 34) : "rgba(255,255,255,0.03)",
+                      borderColor: selected ? category.color : "rgba(255,255,255,0.08)",
+                      background: selected ? tint(category.color, 34) : "rgba(255,255,255,0.03)",
                       color: selected ? "#fff" : "#a1a1aa",
-                      boxShadow: selected ? `0 0 0 1px ${tint(meta.color, 90)}` : undefined,
+                      boxShadow: selected ? `0 0 0 1px ${tint(category.color, 90)}` : undefined,
                     }}
                   >
-                    <CategoryIcon category={key} className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">{meta.label}</span>
+                    <CategoryIcon
+                      category={category.key}
+                      icon={category.icon}
+                      color={category.color}
+                      className="h-3.5 w-3.5 shrink-0"
+                    />
+                    <span className="truncate">{category.label}</span>
                   </button>
                 );
               })}
+              {!categories.some((category) => category.key === form.category) && (
+                <div
+                  className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[13px] text-amber-200"
+                  title="Cette catégorie est désactivée. Elle est conservée sur cet événement historique."
+                >
+                  <CategoryIcon category={form.category} className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">Catégorie désactivée · {form.category}</span>
+                </div>
+              )}
             </div>
           </div>
+          {/* Sous-catégorie et type de tâche */}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Sous-catégorie">
+              <select
+                className="alp-input"
+                value={form.subcategoryId}
+                onChange={(e) => {
+                  set("subcategoryId", e.target.value);
+                  set("taskTypeId", "");
+                }}
+              >
+                <option value="">Aucune sous-catégorie</option>
+
+                {workflowSubcategories
+                  .filter((item) => item.categoryKey === form.category)
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))}
+
+                {form.subcategoryId &&
+                  !workflowSubcategories.some((item) => item.id === form.subcategoryId) && (
+                    <option value={form.subcategoryId}>
+                      Sous-catégorie historique
+                    </option>
+                  )}
+              </select>
+            </Field>
+
+            <Field label="Type de tâche">
+              <select
+                className="alp-input"
+                value={form.taskTypeId}
+                disabled={!form.subcategoryId}
+                onChange={(e) => set("taskTypeId", e.target.value)}
+              >
+                <option value="">Aucun type de tâche</option>
+
+                {workflowTaskTypes
+                  .filter((item) => item.subcategoryId === form.subcategoryId)
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))}
+
+                {form.taskTypeId &&
+                  !workflowTaskTypes.some((item) => item.id === form.taskTypeId) && (
+                    <option value={form.taskTypeId}>
+                      Type de tâche historique
+                    </option>
+                  )}
+              </select>
+            </Field>
+          </div>
+{form.taskTypeId && (() => {
+  const activeFields = workflowFields
+    .filter(
+      (field) =>
+        field.taskTypeId === form.taskTypeId && field.isActive
+    )
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  if (activeFields.length === 0) return null;
+
+  return (
+    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      {activeFields.map((field) => {
+        const value = form.customFields[field.key];
+
+        return (
+          <Field
+            key={field.id}
+            label={`${field.label}${field.isRequired ? " *" : ""}`}
+          >
+            {field.fieldType === "checkbox" ? (
+              <label className="flex items-center gap-2 text-sm text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={value === true}
+                  onChange={(e) =>
+                    set("customFields", {
+                      ...form.customFields,
+                      [field.key]: e.target.checked,
+                    })
+                  }
+                />
+                {field.label}
+              </label>
+            ) : field.fieldType === "select" ? (
+              <select
+                className="alp-input"
+                value={String(value ?? "")}
+                required={field.isRequired}
+                onChange={(e) =>
+                  set("customFields", {
+                    ...form.customFields,
+                    [field.key]: e.target.value,
+                  })
+                }
+              >
+                <option value="">Sélectionner...</option>
+                {field.options.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            ) : field.fieldType === "user" ? (
+  <select
+    className="alp-input"
+    value={String(value ?? "")}
+    required={field.isRequired}
+    onChange={(e) =>
+      set("customFields", {
+        ...form.customFields,
+        [field.key]: e.target.value,
+      })
+    }
+  >
+    <option value="">Sélectionner un collaborateur...</option>
+    {users.map((user) => (
+      <option key={user.id} value={user.id}>
+        {user.fullName}
+      </option>
+    ))}
+  </select>
+) : (
+  <input
+    className="alp-input"
+    type={
+      field.fieldType === "date"
+        ? "date"
+        : field.fieldType === "amount"
+          ? "number"
+          : "text"
+    }
+    step={field.fieldType === "amount" ? "0.01" : undefined}
+    required={field.isRequired}
+    value={String(value ?? "")}
+    onChange={(e) =>
+      set("customFields", {
+        ...form.customFields,
+        [field.key]: e.target.value,
+      })
+    }
+  />
+)}
+          </Field>
+        );
+      })}
+    </div>
+  );
+})()}
+          {/* Champs personnalisés de la catégorie */}
+          {activeCategoryFields.length > 0 && (
+            <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4">
+              <span className="mb-3 block text-sm font-medium text-zinc-200">
+                Informations de la catégorie
+              </span>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {activeCategoryFields.map((field) => {
+                  const value = form.customFields[field.id];
+                  const update = (next: unknown) =>
+                    set("customFields", { ...form.customFields, [field.id]: next });
+
+                  return (
+                    <Field
+                      key={field.id}
+                      label={`${field.label}${field.isRequired && field.fieldType !== "checkbox" ? " *" : ""}`}
+                    >
+                      {field.fieldType === "checkbox" ? (
+                        <label className="flex items-center gap-2 text-sm text-zinc-300">
+                          <input
+                            type="checkbox"
+                            checked={value === true}
+                            onChange={(e) => update(e.target.checked)}
+                          />
+                          {field.label}
+                        </label>
+                      ) : field.fieldType === "select" ? (
+                        <select
+                          className="alp-input"
+                          value={String(value ?? "")}
+                          required={field.isRequired}
+                          onChange={(e) => update(e.target.value)}
+                        >
+                          <option value="">Sélectionner...</option>
+                          {field.options.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                          {typeof value === "string" &&
+                            value !== "" &&
+                            !field.options.some((option) => option.value === value) && (
+                              <option value={value}>{value} (valeur historique)</option>
+                            )}
+                        </select>
+                      ) : (
+                        <input
+                          className="alp-input"
+                          type={
+                            field.fieldType === "date"
+                              ? "date"
+                              : field.fieldType === "number"
+                                ? "number"
+                                : "text"
+                          }
+                          step={field.fieldType === "number" ? "any" : undefined}
+                          required={field.isRequired}
+                          value={String(value ?? "")}
+                          onChange={(e) => update(e.target.value)}
+                        />
+                      )}
+                    </Field>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {categoryFieldsLoading && activeCategoryFields.length === 0 && (
+            <p className="text-xs text-zinc-500">Chargement des champs de la catégorie…</p>
+          )}
 
           {/* Dates */}
           <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4">

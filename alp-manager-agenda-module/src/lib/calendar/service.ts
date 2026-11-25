@@ -1,7 +1,18 @@
 /* Service métier de l'agenda (serveur uniquement) : requêtes, occurrences, écriture, résumé, rappels. */
 import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { calendarEventExceptions, calendarEventParticipants, calendarEvents } from "@/db/schema";
+
+import {
+  calendarCategories,
+  calendarCategoryFields,
+  calendarEventExceptions,
+  calendarEventParticipants,
+  calendarEvents,
+  workflowSubcategories,
+  workflowTaskTypes,
+  workflowTaskTypeFields,
+} from "@/db/schema";
+
 import { loadUserRefMap } from "@/lib/auth/users";
 import { canEditEvent, concernsUser } from "./permissions";
 import { expandOccurrences, parseRule } from "./recurrence";
@@ -41,6 +52,216 @@ export class CalendarError extends Error {
 
 export function isUuid(value: string): boolean {
   return UUID_RE.test(value);
+}
+async function assertCategoryAvailable(
+  categoryKey: string,
+  allowInactive = false,
+): Promise<void> {
+  const [category] = await db
+    .select({
+      key: calendarCategories.key,
+      isActive: calendarCategories.isActive,
+    })
+    .from(calendarCategories)
+    .where(eq(calendarCategories.key, categoryKey))
+    .limit(1);
+
+  if (!category) {
+    throw new CalendarError("Cette catégorie n'existe pas.", 400);
+  }
+
+  if (!category.isActive && !allowInactive) {
+    throw new CalendarError("Cette catégorie est désactivée.", 400);
+  }
+}
+
+async function assertWorkflowSelection(
+  categoryKey: string,
+  subcategoryId: string | null,
+  taskTypeId: string | null,
+  allowInactive = false,
+): Promise<void> {
+  if (!subcategoryId && !taskTypeId) return;
+
+  if (!subcategoryId && taskTypeId) {
+    throw new CalendarError(
+      "Un type de tâche nécessite une sous-catégorie.",
+      400,
+    );
+  }
+
+  const [subcategory] = await db
+    .select({
+      id: workflowSubcategories.id,
+      categoryKey: workflowSubcategories.categoryKey,
+      isActive: workflowSubcategories.isActive,
+    })
+    .from(workflowSubcategories)
+    .where(eq(workflowSubcategories.id, subcategoryId!))
+    .limit(1);
+
+  if (!subcategory) {
+    throw new CalendarError("Cette sous-catégorie n'existe pas.", 400);
+  }
+
+  if (subcategory.categoryKey !== categoryKey) {
+    throw new CalendarError(
+      "Cette sous-catégorie ne correspond pas à la catégorie sélectionnée.",
+      400,
+    );
+  }
+
+  if (!subcategory.isActive && !allowInactive) {
+    throw new CalendarError("Cette sous-catégorie est désactivée.", 400);
+  }
+
+  if (!taskTypeId) return;
+
+  const [taskType] = await db
+    .select({
+      id: workflowTaskTypes.id,
+      subcategoryId: workflowTaskTypes.subcategoryId,
+      isActive: workflowTaskTypes.isActive,
+    })
+    .from(workflowTaskTypes)
+    .where(eq(workflowTaskTypes.id, taskTypeId))
+    .limit(1);
+
+  if (!taskType) {
+    throw new CalendarError("Ce type de tâche n'existe pas.", 400);
+  }
+
+  if (taskType.subcategoryId !== subcategoryId) {
+    throw new CalendarError(
+      "Ce type de tâche ne correspond pas à la sous-catégorie sélectionnée.",
+      400,
+    );
+  }
+
+  if (!taskType.isActive && !allowInactive) {
+    throw new CalendarError("Ce type de tâche est désactivé.", 400);
+  }
+}
+
+type FieldDefinition = {
+  label: string;
+  fieldType: string;
+  isRequired: boolean;
+  options: Array<{ label: string; value: string }>;
+};
+
+function isEmptyValue(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    value === "" ||
+    (typeof value === "string" && !value.trim())
+  );
+}
+
+function assertFieldValue(field: FieldDefinition, value: unknown): void {
+  const label = `« ${field.label} »`;
+
+  switch (field.fieldType) {
+    case "checkbox":
+      if (typeof value !== "boolean") {
+        throw new CalendarError(`Le champ ${label} doit être une case à cocher.`, 400);
+      }
+      return;
+    case "number":
+    case "amount": {
+      const valid =
+        (typeof value === "number" && Number.isFinite(value)) ||
+        (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value)));
+      if (!valid) {
+        throw new CalendarError(`Le champ ${label} doit contenir un nombre valide.`, 400);
+      }
+      return;
+    }
+    case "date":
+      if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        throw new CalendarError(`Le champ ${label} doit contenir une date valide.`, 400);
+      }
+      return;
+    case "select":
+      if (typeof value !== "string") {
+        throw new CalendarError(`Le champ ${label} doit contenir du texte.`, 400);
+      }
+      if (!field.options.some((option) => option.value === value)) {
+        throw new CalendarError(`La valeur du champ ${label} est invalide.`, 400);
+      }
+      return;
+    default:
+      // text, user, et tout autre type texte
+      if (typeof value !== "string") {
+        throw new CalendarError(`Le champ ${label} doit contenir du texte.`, 400);
+      }
+      if (value.length > 5000) {
+        throw new CalendarError(`Le champ ${label} est trop long.`, 400);
+      }
+  }
+}
+
+/**
+ * Valide les champs personnalisés d'un événement :
+ * - champs de la catégorie (clé = UUID du champ) ;
+ * - champs du workflow du type de tâche sélectionné (clé = field.key, inchangée).
+ * Seuls les champs ACTIFS de la catégorie / du type de tâche courants sont validés
+ * (obligatoire + type + options). Les valeurs historiques (champs désactivés, autre
+ * catégorie, autre type de tâche, valeurs déjà présentes sur l'événement) sont conservées
+ * sans validation afin de ne jamais perdre de données.
+ */
+async function validateCustomFields(
+  category: string,
+  taskTypeId: string | null,
+  customFields: Record<string, unknown>,
+  existingCustomFields: Record<string, unknown> = {},
+): Promise<void> {
+  const [categoryDefinitions, workflowDefinitions] = await Promise.all([
+    db.select().from(calendarCategoryFields),
+    db.select().from(workflowTaskTypeFields),
+  ]);
+
+  const knownKeys = new Set<string>([
+    ...categoryDefinitions.map((field) => field.id),
+    ...workflowDefinitions.map((field) => field.key),
+    ...Object.keys(existingCustomFields ?? {}),
+  ]);
+
+  for (const key of Object.keys(customFields)) {
+    if (!knownKeys.has(key)) {
+      throw new CalendarError(
+        `Le champ personnalisé « ${key} » n'est pas autorisé.`,
+        400,
+      );
+    }
+  }
+
+  const activeCategoryFields = categoryDefinitions.filter(
+    (field) => field.categoryKey === category && field.isActive,
+  );
+  const activeWorkflowFields = taskTypeId
+    ? workflowDefinitions.filter(
+        (field) => field.taskTypeId === taskTypeId && field.isActive,
+      )
+    : [];
+
+  const checks: Array<{ key: string; field: FieldDefinition }> = [
+    ...activeCategoryFields.map((field) => ({ key: field.id, field })),
+    ...activeWorkflowFields.map((field) => ({ key: field.key, field })),
+  ];
+
+  for (const { key, field } of checks) {
+    const value = customFields[key];
+
+    if (field.isRequired && isEmptyValue(value)) {
+      throw new CalendarError(`Le champ « ${field.label} » est obligatoire.`, 400);
+    }
+
+    if (value === undefined || value === null || value === "") continue;
+
+    assertFieldValue(field, value);
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -122,6 +343,9 @@ function toEventDto(row: EventRow, userMap: UserRefMap, participantIds: string[]
     title: row.title,
     description: row.description,
     category: row.category,
+    subcategoryId: row.subcategoryId,
+    taskTypeId: row.taskTypeId,
+    customFields: row.customFields ?? {},
     startAt: row.startAt.toISOString(),
     endAt: row.endAt.toISOString(),
     allDay: row.allDay,
@@ -334,6 +558,9 @@ async function upsertException(
 }
 
 export async function createEvent(viewer: CalendarUser, data: ParsedEvent): Promise<string> {
+  await assertCategoryAvailable(data.category);
+  await assertWorkflowSelection(data.category, data.subcategoryId, data.taskTypeId);
+  await validateCustomFields(data.category, data.taskTypeId, data.customFields);
   await assertUsersExist([data.assignedToId, ...data.participantIds]);
 
   return db.transaction(async (tx) => {
@@ -343,6 +570,9 @@ export async function createEvent(viewer: CalendarUser, data: ParsedEvent): Prom
         title: data.title,
         description: data.description,
         category: data.category,
+        subcategoryId: data.subcategoryId,
+        taskTypeId: data.taskTypeId,
+        customFields: data.customFields,
         startAt: data.startAt,
         endAt: data.endAt,
         allDay: data.allDay,
@@ -372,6 +602,21 @@ export async function createEvent(viewer: CalendarUser, data: ParsedEvent): Prom
 /** Modification complète (formulaire) : s'applique à l'événement ou à toute la série. */
 export async function updateEvent(viewer: CalendarUser, id: string, data: ParsedEvent): Promise<void> {
   const { row } = await getEditableRow(viewer, id);
+  await assertCategoryAvailable(data.category, row.category === data.category);
+  await assertWorkflowSelection(
+  data.category,
+  data.subcategoryId,
+  data.taskTypeId,
+  row.subcategoryId === data.subcategoryId &&
+    row.taskTypeId === data.taskTypeId,
+);
+
+await validateCustomFields(
+    data.category,
+    data.taskTypeId,
+    data.customFields,
+    (row.customFields ?? {}) as Record<string, unknown>,
+  );
   await assertUsersExist([data.assignedToId, ...data.participantIds]);
 
   const scheduleChanged =
@@ -387,6 +632,9 @@ export async function updateEvent(viewer: CalendarUser, id: string, data: Parsed
         title: data.title,
         description: data.description,
         category: data.category,
+        subcategoryId: data.subcategoryId,
+        taskTypeId: data.taskTypeId,
+        customFields: data.customFields,
         startAt: data.startAt,
         endAt: data.endAt,
         allDay: data.allDay,
@@ -510,6 +758,8 @@ export async function duplicateEvent(viewer: CalendarUser, id: string): Promise<
         title: `${row.title.slice(0, 150)} (copie)`,
         description: row.description,
         category: row.category,
+        subcategoryId: row.subcategoryId,
+        taskTypeId: row.taskTypeId,
         startAt: row.startAt,
         endAt: row.endAt,
         allDay: row.allDay,
